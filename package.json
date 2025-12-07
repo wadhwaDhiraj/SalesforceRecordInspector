@@ -2,7 +2,7 @@
     "name": "salesforce-record-inspector",
     "displayName": "Salesforce Record Inspector",
     "description": "Inspect Salesforce records by ID (selection/clipboard), safely edit updateable fields, open in org, save/load presets, navigate history, and analyze Apex logs by scanning VARIABLE_ASSIGNMENT to view variable versions—all in a side-by-side webview.",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "publisher": "dhirajw27",
     "icon": "icon.png",
     "repository": {
