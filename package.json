@@ -17,42 +17,30 @@
         "Other"
     ],
     "main": "./out/extension.js",
-    "contributes": {
+   "contributes": {
         "commands": [
             {
-                "command": "sfInspector.inspectId",
-                "title": "Inspect Salesforce Record"
-            },
-            {
-                "command": "sfInspector.inspectClipboard",
-                "title": "Inspect Salesforce Record (from Clipboard)"
+                "command": "sfInspector.start",
+                "title": "Salesforce Record Inspector"
             },
             {
                 "command": "sfInspector.saveRecord",
-                "title": "Save Salesforce Record"
-            },
-            {
-                "command": "sfInspector.scanLogVariable",
-                "title": "Scan Log Variable History"
+                "title": "Save Record" 
             }
         ],
         "menus": {
             "editor/context": [
                 {
-                    "command": "sfInspector.inspectId",
+                    "command": "sfInspector.start",
                     "group": "navigation",
-                    "when": "editorHasSelection"
-                },
+                    "title": "Salesforce Record Inspector"
+                }
+            ],
+            "explorer/context": [
                 {
-                    "command": "sfInspector.inspectClipboard",
-                    "title": "Inspect Salesforce Record (from Clipboard)",
+                    "command": "sfInspector.start",
                     "group": "navigation",
-                    "when": "!editorHasSelection && resourceExtname != .log"
-                },
-                {
-                    "command": "sfInspector.scanLogVariable",
-                    "group": "navigation",
-                    "when": "resourceExtname == .log"
+                    "title": "Salesforce Record Inspector"
                 }
             ]
         }

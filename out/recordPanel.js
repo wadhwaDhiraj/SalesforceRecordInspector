@@ -7,6 +7,8 @@ class RecordPanel {
     constructor(panel, prefixService, globalState) {
         this._disposables = [];
         this._history = [];
+        this._isLogFileContext = false;
+        this._homePrefill = "";
         this._currentMetadata = {};
         this._isEditing = false;
         this._ignoreNulls = false;
@@ -16,6 +18,19 @@ class RecordPanel {
         this._panel.onDidDispose(() => this.dispose(), null, this._disposables);
         this._panel.webview.onDidReceiveMessage(async (message) => {
             switch (message.command) {
+                case 'submitId':
+                    await this.inspectNewId(message.id);
+                    break;
+                // --- UNIFIED LOG SCAN HANDLER ---
+                case 'requestLogScan':
+                    const varName = await vscode.window.showInputBox({
+                        placeHolder: "Enter variable name (e.g. newOrderList)",
+                        prompt: "Scan open log file"
+                    });
+                    if (varName) {
+                        vscode.commands.executeCommand('sfInspector.internalScanLog', varName);
+                    }
+                    break;
                 case 'copy':
                     vscode.env.clipboard.writeText(message.text);
                     vscode.window.setStatusBarMessage('Copied to clipboard', 2000);
@@ -34,6 +49,9 @@ class RecordPanel {
                 case 'back':
                     this.goBack();
                     break;
+                case 'home':
+                    this.updateHome();
+                    break;
                 case 'toggleEdit':
                     this._isEditing = !this._isEditing;
                     this.refreshHtml();
@@ -50,9 +68,6 @@ class RecordPanel {
                 case 'requestLoadTemplate':
                     await this.showLoadTemplatePicker();
                     break;
-                case 'scanLog':
-                    vscode.commands.executeCommand('sfInspector.scanLogVariable');
-                    break;
                 case 'changeVersion':
                     this.changeLogVersion(parseInt(message.index));
                     break;
@@ -60,49 +75,119 @@ class RecordPanel {
                     this._ignoreNulls = message.value;
                     this.refreshHtml();
                     break;
+                case 'close':
+                    this.dispose();
+                    break;
             }
         }, null, this._disposables);
     }
-    static createOrShow(extensionUri, objectName, id, data, metadata, prefixService, globalState) {
+    static createOrShow(extensionUri, prefixService, globalState, prefillId, isLogFile, objectName, data, metadata) {
         const column = vscode.ViewColumn.Beside;
         if (RecordPanel.currentPanel) {
             RecordPanel.currentPanel._panel.reveal(column);
-            RecordPanel.currentPanel.clearHistory();
-            RecordPanel.currentPanel.updateLive(objectName, id, data, metadata);
+            RecordPanel.currentPanel._isLogFileContext = isLogFile;
+            RecordPanel.currentPanel._homePrefill = prefillId;
+            if (data) {
+                RecordPanel.currentPanel.clearHistory();
+                RecordPanel.currentPanel.updateLive(objectName, prefillId, data, metadata);
+            }
+            else if (prefillId) {
+                RecordPanel.currentPanel.setLoading(prefillId);
+            }
+            else {
+                RecordPanel.currentPanel.updateHome();
+            }
             return;
         }
-        const panel = vscode.window.createWebviewPanel('sfInspector', `Inspect: ${objectName}`, column, { enableScripts: true });
+        const panel = vscode.window.createWebviewPanel('sfInspector', 'Salesforce Inspector', column, { enableScripts: true });
         RecordPanel.currentPanel = new RecordPanel(panel, prefixService, globalState);
-        RecordPanel.currentPanel.updateLive(objectName, id, data, metadata);
+        RecordPanel.currentPanel._isLogFileContext = isLogFile;
+        RecordPanel.currentPanel._homePrefill = prefillId;
+        if (data) {
+            RecordPanel.currentPanel.updateLive(objectName, prefillId, data, metadata);
+        }
+        else if (prefillId) {
+            RecordPanel.currentPanel.setLoading(prefillId);
+        }
+        else {
+            RecordPanel.currentPanel.updateHome();
+        }
     }
-    static createOrShowLogMode(extensionUri, variableName, versions, prefixService, globalState) {
-        const column = vscode.ViewColumn.Beside;
-        if (RecordPanel.currentPanel) {
-            RecordPanel.currentPanel._panel.reveal(column);
-            RecordPanel.currentPanel.updateLog(variableName, versions, 0);
-            return;
+    setLoading(id) {
+        this._panel.title = `Loading ${id}...`;
+        const newState = { view: 'LOADING', objectName: 'Loading', id: id, data: {}, metadata: {} };
+        if (this._currentState && this._currentState.view !== 'HOME' && this._currentState.view !== 'ERROR') {
+            this._history.push(this._currentState);
         }
-        const panel = vscode.window.createWebviewPanel('sfInspector', `Log: ${variableName}`, column, { enableScripts: true });
-        RecordPanel.currentPanel = new RecordPanel(panel, prefixService, globalState);
-        RecordPanel.currentPanel.updateLog(variableName, versions, 0);
+        this._currentState = newState;
+        this._panel.webview.html = this._getHtmlForLoading(id);
+    }
+    setError(id, message) {
+        this._panel.title = `Error`;
+        const newState = {
+            view: 'ERROR', objectName: 'Error', id: id, data: {}, metadata: {}, errorMessage: message
+        };
+        this._currentState = newState;
+        this._panel.webview.html = this._getHtmlForError(id, message);
+    }
+    updateHome() {
+        this._panel.title = "Inspector Home";
+        const newState = { view: 'HOME', objectName: 'Home', id: '', data: {}, metadata: {} };
+        this._currentState = newState;
+        this._panel.webview.html = this._getHtmlForHome();
+    }
+    updateLive(objectName, id, data, metadata, isNewState = true) {
+        this._panel.title = `Inspect: ${objectName}`;
+        this._currentMetadata = metadata;
+        const fieldMap = {};
+        if (metadata && metadata.fields) {
+            metadata.fields.forEach((f) => fieldMap[f.name] = { updateable: f.updateable, type: f.type, label: f.label, picklistValues: f.picklistValues });
+        }
+        this._currentMetadata.processedMap = fieldMap;
+        const newState = { view: 'RECORD', objectName, id, data, metadata: this._currentMetadata };
+        if (isNewState && this._currentState && this._currentState.view !== 'HOME' && this._currentState.view !== 'LOADING') {
+            this._history.push(this._currentState);
+        }
+        this._currentState = newState;
+        this.refreshHtml();
+    }
+    updateLog(variableName, versions, index) {
+        this._panel.title = `Log: ${variableName}`;
+        const newState = {
+            view: 'LOG', objectName: variableName, id: `Version ${index + 1}`, data: versions[index].data, metadata: {},
+            logVersions: versions, currentVersionIndex: index
+        };
+        if (this._currentState && this._currentState.view !== 'HOME' && this._currentState.view !== 'LOADING') {
+            this._history.push(this._currentState);
+        }
+        this._currentState = newState;
+        this.refreshHtml();
     }
     async handleSaveTemplateRequest(allFields, modifiedFields) {
         const objectName = this._currentState?.objectName || "Record";
         const modifiedCount = Object.keys(modifiedFields).length;
         const items = [];
-        items.push({ label: "Save All", detail: "Saves current values of all visible inputs.", data: allFields });
+        items.push({
+            label: "Save All Fields (Snapshot)",
+            detail: "Saves current values of all visible inputs.",
+            data: allFields
+        });
         if (modifiedCount > 0) {
-            items.push({ label: `Save Modified (${modifiedCount})`, detail: "Saves only the fields you have changed.", data: modifiedFields });
+            items.push({
+                label: `Save Only Modified Fields (${modifiedCount})`,
+                detail: "Saves only the fields you have changed in this session.",
+                data: modifiedFields
+            });
         }
-        const choice = await vscode.window.showQuickPick(items, { placeHolder: "Select what to save:" });
+        const choice = await vscode.window.showQuickPick(items, { placeHolder: "Select what to include in this preset:" });
         if (!choice)
             return;
-        const name = await vscode.window.showInputBox({ prompt: "Name this preset", placeHolder: "e.g. Standard Setup" });
+        const name = await vscode.window.showInputBox({ prompt: `Name this ${objectName} preset`, placeHolder: "e.g. Standard Setup" });
         if (!name)
             return;
         const key = `sfInspector_templates_${objectName}`;
         const existing = this._globalState.get(key) || {};
-        existing[name] = choice.data;
+        existing[name] = { ...choice.data, _sourceId: this._currentState?.id };
         await this._globalState.update(key, existing);
         vscode.window.showInformationMessage(`Preset "${name}" saved!`);
     }
@@ -112,14 +197,70 @@ class RecordPanel {
         const existing = this._globalState.get(key) || {};
         const templates = Object.keys(existing);
         if (templates.length === 0) {
-            vscode.window.showInformationMessage(`No presets found for ${objectName}.`);
+            vscode.window.showInformationMessage(`No saved presets found for ${objectName}. Save one first!`);
             return;
         }
         const selected = await vscode.window.showQuickPick(templates, { placeHolder: "Select a preset to load..." });
         if (selected) {
-            const data = existing[selected];
-            delete data['_sourceId'];
-            this._panel.webview.postMessage({ command: 'applyTemplate', fields: data });
+            const fieldsToApply = existing[selected];
+            delete fieldsToApply['_sourceId'];
+            this._panel.webview.postMessage({ command: 'applyTemplate', fields: fieldsToApply });
+        }
+    }
+    goBack() {
+        if (this._history.length > 0) {
+            const previous = this._history.pop();
+            if (previous && previous.view === 'LOADING' && this._history.length > 0) {
+                const realPrev = this._history.pop();
+                this.restoreState(realPrev);
+            }
+            else if (previous) {
+                this.restoreState(previous);
+            }
+        }
+        else {
+            this.updateHome();
+        }
+    }
+    restoreState(state) {
+        this._isEditing = false;
+        if (state.view === 'LOG') {
+            this.updateLog(state.objectName, state.logVersions, state.currentVersionIndex);
+        }
+        else if (state.view === 'RECORD') {
+            this.updateLive(state.objectName, state.id, state.data, state.metadata, false);
+        }
+        else {
+            this.updateHome();
+        }
+    }
+    async inspectNewId(idRaw) {
+        const idPattern = /\b([a-zA-Z0-9]{18}|[a-zA-Z0-9]{15})\b/;
+        const match = idRaw.match(idPattern);
+        const id = match ? match[0] : idRaw.trim();
+        if (!/^[a-zA-Z0-9]{15,18}$/.test(id)) {
+            vscode.window.showErrorMessage(`Invalid Salesforce ID: ${id}`);
+            return;
+        }
+        if (this._currentState && this._currentState.id === id) {
+            vscode.window.setStatusBarMessage("Already viewing this record.", 3000);
+            return;
+        }
+        this.setLoading(id);
+        try {
+            const objectName = await this._prefixService.resolveObjectName(id);
+            if (!objectName)
+                throw new Error("Unknown Object Type");
+            const [recordData, metadata] = await Promise.all([
+                sfdxService_1.SfdxService.getRecordData(objectName, id),
+                sfdxService_1.SfdxService.getMetadata(objectName)
+            ]);
+            if (!recordData || !recordData.result)
+                throw new Error("Record not found in Salesforce.");
+            this.updateLive(objectName, id, recordData, metadata?.result);
+        }
+        catch (e) {
+            this.setError(id, e.message);
         }
     }
     clearHistory() {
@@ -130,85 +271,111 @@ class RecordPanel {
     }
     refreshAfterSave(newData) {
         this._isEditing = false;
-        if (this._currentState && this._currentState.mode === 'LIVE') {
+        if (this._currentState && this._currentState.view === 'RECORD') {
             this.updateLive(this._currentState.objectName, this._currentState.id, newData, this._currentMetadata, false);
         }
     }
     resetSaveButton() {
         this._panel.webview.postMessage({ command: 'resetButton' });
     }
-    updateLive(objectName, id, data, metadata, isNewState = true) {
-        this._panel.title = `Inspect: ${objectName}`;
-        this._currentMetadata = metadata;
-        const fieldMap = {};
-        if (metadata && metadata.fields) {
-            metadata.fields.forEach((f) => fieldMap[f.name] = { updateable: f.updateable, type: f.type, label: f.label, picklistValues: f.picklistValues });
-        }
-        this._currentMetadata.processedMap = fieldMap;
-        const newState = { mode: 'LIVE', objectName, id, data, metadata: this._currentMetadata };
-        if (isNewState && this._currentState)
-            this._history.push(this._currentState);
-        this._currentState = newState;
-        this.refreshHtml();
-    }
-    updateLog(variableName, versions, index) {
-        this._panel.title = `Log: ${variableName}`;
-        const newState = {
-            mode: 'LOG',
-            objectName: variableName,
-            id: `Version ${index + 1}`,
-            data: versions[index].data,
-            metadata: {},
-            logVersions: versions,
-            currentVersionIndex: index
-        };
-        if (this._currentState && this._currentState.mode !== 'LOG')
-            this._history.push(this._currentState);
-        this._currentState = newState;
-        this.refreshHtml();
-    }
     changeLogVersion(index) {
-        if (this._currentState && this._currentState.mode === 'LOG' && this._currentState.logVersions) {
+        if (this._currentState && this._currentState.view === 'LOG' && this._currentState.logVersions) {
             this._currentState.currentVersionIndex = index;
             this._currentState.data = this._currentState.logVersions[index].data;
             this.refreshHtml();
         }
     }
-    async inspectNewId(id) {
-        try {
-            await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: "Drilling..." }, async () => {
-                const objectName = await this._prefixService.resolveObjectName(id);
-                if (!objectName)
-                    throw new Error("Unknown");
-                const [data, meta] = await Promise.all([sfdxService_1.SfdxService.getRecordData(objectName, id), sfdxService_1.SfdxService.getMetadata(objectName)]);
-                this.updateLive(objectName, id, data, meta?.result);
-            });
-        }
-        catch (e) {
-            vscode.window.showErrorMessage(e.message);
-        }
-    }
-    goBack() {
-        if (this._history.length > 0) {
-            const previous = this._history.pop();
-            if (previous) {
-                this._isEditing = false;
-                if (previous.mode === 'LOG') {
-                    this.updateLog(previous.objectName, previous.logVersions, previous.currentVersionIndex);
-                }
-                else {
-                    this.updateLive(previous.objectName, previous.id, previous.data, previous.metadata, false);
-                }
-            }
-        }
-    }
     refreshHtml() {
         if (!this._currentState)
             return;
-        this._panel.webview.html = this._getHtmlForWebview(this._currentState);
+        if (this._currentState.view === 'HOME') {
+            this._panel.webview.html = this._getHtmlForHome();
+        }
+        else if (this._currentState.view === 'LOADING') {
+            this._panel.webview.html = this._getHtmlForLoading(this._currentState.id);
+        }
+        else if (this._currentState.view === 'ERROR') {
+            this._panel.webview.html = this._getHtmlForError(this._currentState.id, this._currentState.errorMessage || "Error");
+        }
+        else {
+            this._panel.webview.html = this._getHtmlForWebview(this._currentState);
+        }
+    }
+    // --- HTML GENERATORS ---
+    _getHtmlForLoading(id) {
+        return `<!DOCTYPE html><html lang="en"><head><style>
+            body { font-family: var(--vscode-font-family); color: var(--vscode-editor-foreground); background-color: var(--vscode-editor-background); display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; }
+            .spinner { border: 4px solid var(--vscode-widget-shadow); border-top: 4px solid var(--vscode-progressBar-background); border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin-bottom: 20px; }
+            @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        </style></head><body>
+            <div class="spinner"></div><h3>Fetching Record...</h3><small>${id}</small>
+        </body></html>`;
+    }
+    _getHtmlForError(id, error) {
+        return `<!DOCTYPE html><html lang="en"><head><style>
+            body { font-family: var(--vscode-font-family); color: var(--vscode-editor-foreground); background-color: var(--vscode-editor-background); display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; padding: 20px; text-align: center; }
+            h2 { color: var(--vscode-errorForeground); margin-bottom: 10px; }
+            p { margin-bottom: 20px; opacity: 0.8; }
+            button { padding: 10px 20px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; cursor: pointer; }
+            button:hover { background: var(--vscode-button-hoverBackground); }
+        </style></head><body>
+            <h2>⚠ Inspection Failed</h2><p>${error}</p>
+            <button onclick="goHome()">Back to Home</button>
+            <script>const vscode = acquireVsCodeApi(); function goHome() { vscode.postMessage({ command: 'home' }); }</script>
+        </body></html>`;
+    }
+    _getHtmlForHome() {
+        const logButton = this._isLogFileContext
+            ? `<button class="action-btn log-btn" onclick="requestLogScan()">🕒 Scan Log Variable</button>`
+            : `<div style="color:#888; margin-top:10px; font-size:12px;">Open a .log file to access Log History</div>`;
+        return `<!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <style>
+                body { font-family: var(--vscode-font-family); padding: 40px 20px; color: var(--vscode-editor-foreground); background-color: var(--vscode-editor-background); display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; box-sizing: border-box; }
+                h1 { margin-bottom: 20px; font-weight: normal; }
+                .input-group { width: 100%; max-width: 400px; display: flex; gap: 5px; margin-bottom: 10px; }
+                input { flex: 1; padding: 10px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); outline: none; }
+                input:focus { border-color: var(--vscode-focusBorder); }
+                button { cursor: pointer; padding: 10px 20px; border: none; font-size: 13px; border-radius: 2px; }
+                .go-btn { background-color: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+                .go-btn:hover { background-color: var(--vscode-button-hoverBackground); }
+                .log-btn { background-color: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); width: 100%; max-width: 400px; margin-bottom: 10px; }
+                .close-btn { background-color: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); width: 100%; max-width: 400px; opacity: 0.8; }
+                .close-btn:hover { opacity: 1; background-color: var(--vscode-button-secondaryHoverBackground); }
+            </style>
+        </head>
+        <body>
+            <h1>Salesforce Inspector</h1>
+            <div class="input-group">
+                <input type="text" id="recordId" placeholder="Enter Record ID or URL..." value="${this._homePrefill}" autofocus>
+                <button class="go-btn" onclick="submit()">Go</button>
+            </div>
+            ${logButton}
+            <button class="action-btn close-btn" onclick="closePanel()">✖ Close</button>
+            <script>
+                const vscode = acquireVsCodeApi();
+                const input = document.getElementById('recordId');
+                input.addEventListener("keypress", function(event) {
+                    if (event.key === "Enter") submit();
+                });
+                function submit() {
+                    const val = input.value.trim();
+                    if(val) vscode.postMessage({ command: 'submitId', id: val });
+                }
+                function requestLogScan() {
+                    vscode.postMessage({ command: 'requestLogScan' });
+                }
+                function closePanel() {
+                    vscode.postMessage({ command: 'close' });
+                }
+            </script>
+        </body>
+        </html>`;
     }
     _getHtmlForWebview(state) {
-        const isLive = state.mode === 'LIVE';
+        const isLive = state.view === 'RECORD';
         let fields = {};
         if (isLive) {
             fields = state.data.result || {};
@@ -220,8 +387,7 @@ class RecordPanel {
         const originalDataJson = JSON.stringify(fields).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
         const headerTitle = isLive ? `${state.objectName} <small>(${state.id})</small>` : `Variable: ${state.objectName}`;
         const nameHtml = (state.data['Name'] && isLive) ? `<h3 class="record-name">${state.data['Name']}</h3>` : '';
-        const showBackBtn = this._history.length > 0;
-        const backBtnHtml = showBackBtn ? `<button class="back-btn" onclick="goBack()">⬅ Back</button>` : '';
+        const backBtnHtml = `<button class="back-btn" onclick="goBack()">⬅</button>`;
         let actionButtons = '';
         if (isLive) {
             if (this._isEditing) {
@@ -239,11 +405,11 @@ class RecordPanel {
                 actionButtons = `
                     <button class="edit-btn action-btn" onclick="toggleEdit()">✎ Edit</button>
                     <button class="open-btn action-btn" onclick="openInOrg()">☁️ Open in Org</button>
-                    <button class="log-btn action-btn" onclick="scanLog()">🕒 Log History</button>
                 `;
             }
         }
         else {
+            // LOG MODE BUTTONS
             let visibleIndices = [];
             const allVersions = state.logVersions || [];
             allVersions.forEach((v, i) => {
@@ -268,6 +434,7 @@ class RecordPanel {
                 options += `<option value="${idx}" ${selected}>Version ${v.version} (Line ${v.lineNumber}) - ${v.timestamp}</option>`;
             });
             const checked = this._ignoreNulls ? 'checked' : '';
+            // FIXED: POINTED onclick="requestLogScan()"
             actionButtons = `
                 <div class="version-selector">
                     <label>History:</label>
@@ -276,10 +443,11 @@ class RecordPanel {
                         <input type="checkbox" id="ignoreNulls" ${checked} onchange="toggleIgnoreNulls(this.checked)">
                         <label for="ignoreNulls">Ignore Nulls</label>
                     </div>
-                    <button class="log-btn action-btn" onclick="scanLog()" style="margin-left:10px">🔍 New Scan</button>
+                    <button class="log-btn action-btn" onclick="requestLogScan()" style="margin-left:10px">🔍 New Scan</button>
                 </div>
             `;
         }
+        // ... Diff Logic ...
         let previousData = null;
         if (!isLive && state.logVersions && state.currentVersionIndex !== undefined) {
             const allVersions = state.logVersions;
@@ -324,7 +492,6 @@ class RecordPanel {
             if (this._isEditing && isLive && key !== 'Id' && state.metadata.processedMap?.[key]?.updateable) {
                 const inputVal = value === null ? '' : String(value).replace(/"/g, '&quot;');
                 const meta = state.metadata.processedMap[key];
-                // --- RESTORED PLACEHOLDERS ---
                 if (meta.type === 'boolean') {
                     const checked = value === true ? 'checked' : '';
                     cellContent = `<input type="checkbox" class="edit-input" data-field="${key}" ${checked}>`;
@@ -359,13 +526,13 @@ class RecordPanel {
             rows += `<tr class="${rowClass}" ${diffTooltip}>
                 <td class="field-name">
                     <div class="cell-container">
-                        <button class="copy-btn" onclick="copy('${key}')" title="Copy to clipboard">❐</button>
+                        <button class="copy-btn" onclick="copy('${key}')" title="Copy">❐</button>
                         <span>${key}</span>
                     </div>
                 </td>
                 <td class="field-value">
                     <div class="cell-container">
-                        ${(!this._isEditing) ? `<button class="copy-btn" onclick="copy('${safeValue}')" title="Copy to clipboard">❐</button>` : ''}
+                        ${(!this._isEditing) ? `<button class="copy-btn" onclick="copy('${safeValue}')" title="Copy">❐</button>` : ''}
                         <span class="val-text">${cellContent}</span>
                     </div>
                 </td>
@@ -383,7 +550,6 @@ class RecordPanel {
                 .title-group { display: flex; flex-direction: column; gap: 4px; }
                 .top-row { display: flex; align-items: center; gap: 10px; }
                 .record-name { margin: 0; font-size: 1.4em; font-weight: normal; }
-                
                 button { cursor: pointer; padding: 6px 12px; border: none; border-radius: 2px; font-size: 12px; }
                 .action-btn { min-width: 90px; }
                 .open-btn { background-color: var(--vscode-button-background); color: var(--vscode-button-foreground); }
@@ -393,7 +559,6 @@ class RecordPanel {
                 .save-btn { background-color: #2da042; color: white; margin-right: 5px; }
                 .cancel-btn { background-color: #d1242f; color: white; }
                 .back-btn { background: none; border: 1px solid var(--vscode-button-background); color: var(--vscode-textLink-foreground); }
-                
                 .version-selector { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
                 select { padding: 5px; background: var(--vscode-dropdown-background); color: var(--vscode-dropdown-foreground); border: 1px solid var(--vscode-dropdown-border); }
                 .checkbox-container { display: flex; align-items: center; margin-left: 10px; font-size: 12px; }
@@ -458,7 +623,7 @@ class RecordPanel {
                 function inspect(newId) { vscode.postMessage({ command: 'inspect', id: newId }); }
                 function goBack() { vscode.postMessage({ command: 'back' }); }
                 function toggleEdit() { vscode.postMessage({ command: 'toggleEdit' }); }
-                function scanLog() { vscode.postMessage({ command: 'scanLog' }); }
+                function requestLogScan() { vscode.postMessage({ command: 'requestLogScan' }); }
                 function changeVersion(index) { vscode.postMessage({ command: 'changeVersion', index: index }); }
                 function toggleIgnoreNulls(checked) { vscode.postMessage({ command: 'toggleIgnoreNulls', value: checked }); }
                 function askSaveTemplate() { 
@@ -467,6 +632,7 @@ class RecordPanel {
                     vscode.postMessage({ command: 'requestSaveTemplate', all: updates, modified: modified });
                 }
                 function askLoadTemplate() { vscode.postMessage({ command: 'requestLoadTemplate' }); }
+                
                 function saveChanges() { 
                     const saveBtn = document.querySelector('.save-btn');
                     if (saveBtn) { saveBtn.innerText = "⏳ Saving..."; saveBtn.disabled = true; }

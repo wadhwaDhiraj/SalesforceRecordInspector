@@ -6,8 +6,6 @@ The Salesforce Record Inspector is a VS Code extension that lets you quickly ins
 
 - VS Code 1.80.0 or newer.
 - Salesforce CLI (`sf`) installed and accessible in your PATH.
-- A default org set: in the terminal run: `sf config set target-org <aliasOrUsername>`.
-- Open your project folder in VS Code.
 
 If `sf` isn’t found or no default org is set, the extension will show helpful error messages.
 
@@ -93,6 +91,7 @@ Use this when you have a .log file open or selected.
    - History selector: Choose a specific version by timestamp and line number.
    - Ignore Nulls: Hide entries where the variable value is null.
    - New Scan: Start another scan on the current/open log.
+4. This only works for single variables, and not list or any other type of variables.
 
 Data display:
 - If the assignment looks like JSON, it’s parsed and shown as a structured object.

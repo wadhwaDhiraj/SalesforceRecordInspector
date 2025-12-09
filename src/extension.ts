@@ -9,87 +9,99 @@ export function activate(context: vscode.ExtensionContext) {
     const prefixService = new PrefixService(context);
     prefixService.warmCache().catch(err => console.error('Cache Warm Failed', err));
 
-    // --- SHARED INSPECT LOGIC ---
-    const handleInspect = async () => {
-        let text = "";
-        const editor = vscode.window.activeTextEditor;
+    // 1. MAIN ENTRY COMMAND
+    let startDisposable = vscode.commands.registerCommand('sfInspector.start', async (uri?: vscode.Uri) => {
+        
+        let editor = vscode.window.activeTextEditor;
+        let isLogFile = false;
+        let prefillId = "";
+
+        if (uri && uri.scheme === 'file') {
+            isLogFile = uri.fsPath.endsWith('.log');
+        } else if (editor) {
+            isLogFile = editor.document.fileName.endsWith('.log');
+        }
 
         if (editor && !editor.selection.isEmpty) {
-            text = editor.document.getText(editor.selection).trim();
+            const sel = editor.document.getText(editor.selection).trim();
+            if (isValidIdOrUrl(sel)) {
+                prefillId = extractId(sel) || "";
+            }
         } 
         
-        if (!text) {
-            const clipText = await vscode.env.clipboard.readText();
-            const extracted = extractIdFromText(clipText);
+        // --- NEW LOGIC: OPEN LOADING STATE IMMEDIATELY IF ID EXISTS ---
+        if (prefillId) {
+            // Open immediately in loading state
+            RecordPanel.createOrShow(
+                context.extensionUri, 
+                prefixService, 
+                context.globalState,
+                prefillId,
+                isLogFile
+            );
             
-            if (extracted) {
-                text = extracted;
-                vscode.window.setStatusBarMessage(`📋 Inspecting ID from Clipboard: ${text}`, 4000);
-            } else {
-                vscode.window.showWarningMessage("No valid Salesforce ID found in selection or clipboard.");
-                return;
-            }
+            // Then Fetch
+            launchInspector(prefillId, false); // Pass false to skip opening panel again
+        } else {
+            // No ID? Open Home
+            RecordPanel.createOrShow(
+                context.extensionUri, 
+                prefixService, 
+                context.globalState,
+                "",
+                isLogFile
+            );
+        }
+    });
+
+    // Helper to fetch data and update EXISTING panel
+    async function launchInspector(text: string, createPanel = true) {
+        if (createPanel) {
+             // ... logic if called from other places ...
         }
 
-        if (!/^[a-zA-Z0-9]{15,18}$/.test(text)) {
-            vscode.window.showWarningMessage(`"${text}" does not look like a valid Salesforce ID.`);
-            return;
-        }
-
-        launchInspector(text);
-    };
-
-    async function launchInspector(text: string) {
         try {
-            await vscode.window.withProgress({
-                location: vscode.ProgressLocation.Notification,
-                title: "Inspecting Record...",
-                cancellable: false
-            }, async (progress) => {
-                
-                progress.report({ message: "Identifying Object Type..." });
-                const objectName = await prefixService.resolveObjectName(text);
-                if (!objectName) throw new Error(`Unknown Key Prefix: ${text.substring(0,3)}`);
+            // We don't need withProgress anymore because the UI shows the spinner!
+            // But we keep it simple.
+            
+            const objectName = await prefixService.resolveObjectName(text);
+            if (!objectName) throw new Error("Unknown Object Type (Prefix not found)");
 
-                progress.report({ message: `Fetching ${objectName} details...` });
-                const [recordData, metadata] = await Promise.all([
-                    SfdxService.getRecordData(objectName, text),
-                    SfdxService.getMetadata(objectName)
-                ]);
+            const [recordData, metadata] = await Promise.all([
+                SfdxService.getRecordData(objectName, text),
+                SfdxService.getMetadata(objectName)
+            ]);
 
-                if (!recordData || !recordData.result) {
-                    throw new Error(`Record found, but no data returned.`);
-                }
+            if (!recordData || !recordData.result) {
+                throw new Error(`Record found, but no data returned.`);
+            }
 
-                RecordPanel.createOrShow(
-                    context.extensionUri, 
-                    objectName, 
-                    text, 
-                    recordData, 
-                    metadata?.result, 
-                    prefixService,
-                    context.globalState
-                );
-            });
+            // Update the panel that is currently showing the spinner
+            if (RecordPanel.currentPanel) {
+                RecordPanel.currentPanel.updateLive(objectName, text, recordData, metadata?.result);
+            }
 
         } catch (err: any) {
             let msg = err.message;
-            if (msg.includes("NOT_FOUND")) msg = `Record ID ${text} does not exist.`;
-            vscode.window.showErrorMessage(`Inspector Failed: ${msg}`);
+            if (msg.includes("NOT_FOUND")) msg = `Record ID ${text} does not exist in this Org.`;
+            
+            // Show Error Page in Panel
+            if (RecordPanel.currentPanel) {
+                RecordPanel.currentPanel.setError(text, msg);
+            } else {
+                vscode.window.showErrorMessage(`Inspector Failed: ${msg}`);
+            }
         }
     }
 
-    let inspectDisposable = vscode.commands.registerCommand('sfInspector.inspectId', handleInspect);
-    let clipboardDisposable = vscode.commands.registerCommand('sfInspector.inspectClipboard', handleInspect);
-
+    // 2. SAVE COMMAND (Internal)
     let saveDisposable = vscode.commands.registerCommand('sfInspector.saveRecord', async (sobject: string, id: string, updates: any) => {
         try {
             const isProd = await SfdxService.isProduction();
             if (isProd) {
                 const answer = await vscode.window.showWarningMessage(
                     `⚠️ WARNING: Updating PRODUCTION record. Are you sure?`, 
-                    { modal: true }, 
-                    "Yes, Update Production"
+                    { modal: true }, "Yes, Update Production"
                 );
                 if (answer !== "Yes, Update Production") {
                     if (RecordPanel.currentPanel) RecordPanel.currentPanel.resetSaveButton();
@@ -111,84 +123,55 @@ export function activate(context: vscode.ExtensionContext) {
                         let displayVal = String(val);
                         if (displayVal.length > 50) displayVal = displayVal.substring(0, 50) + "...";
                         return `• ${key}: ${displayVal}`;
-                    })
-                    .join('\n');
+                    }).join('\n');
                     
-                vscode.window.showInformationMessage(`✅ Successfully Updated ${sobject}\n\n${changeList}`, { modal: true });
+                vscode.window.showInformationMessage(`✅ Updated ${sobject}\n\n${changeList}`, { modal: true });
             });
-
         } catch (err: any) {
             if (RecordPanel.currentPanel) RecordPanel.currentPanel.resetSaveButton();
             vscode.window.showErrorMessage(`Update Failed: ${err.message}`);
         }
     });
 
-    // 3. LOG HISTORY COMMAND (Updated)
-    let logHistoryDisposable = vscode.commands.registerCommand('sfInspector.scanLogVariable', async (uri?: vscode.Uri) => {
-        
+    // 3. LOG SCAN COMMAND
+    let scanLogDisposable = vscode.commands.registerCommand('sfInspector.internalScanLog', async (varName: string) => {
         let editor = vscode.window.activeTextEditor;
-        
-        // 1. Determine which file to scan
-        // If triggered via context menu (uri present), open/focus that document
-        if (uri && uri.scheme === 'file') {
-            const doc = await vscode.workspace.openTextDocument(uri);
-            editor = await vscode.window.showTextDocument(doc);
-        }
-        // Fallback: If no editor, look for visible log files
-        else if (!editor || !editor.document.fileName.endsWith('.log')) {
+        if (!editor || !editor.document.fileName.endsWith('.log')) {
             editor = vscode.window.visibleTextEditors.find(e => e.document.fileName.endsWith('.log'));
         }
 
         if (!editor) {
-            vscode.window.showWarningMessage("Please open a Salesforce Log (.log) file first.");
+            vscode.window.showErrorMessage("No open Salesforce Log file found.");
             return;
         }
-
-        // 2. Pre-fill variable name from selection
-        let defaultVar = "";
-        if (!editor.selection.isEmpty) {
-            defaultVar = editor.document.getText(editor.selection).trim();
-        }
-
-        const varName = await vscode.window.showInputBox({ 
-            placeHolder: "Enter variable name (e.g. newOrderList)",
-            prompt: "Scan log for variable assignments",
-            value: defaultVar
-        });
-
-        if (!varName) return;
 
         try {
             const logContent = editor.document.getText();
             const versions = LogHistoryService.parseLog(logContent, varName);
 
             if (versions.length === 0) {
-                vscode.window.showInformationMessage(`No assignments found for variable '${varName}'.`);
+                vscode.window.showInformationMessage(`No assignments found for '${varName}'.`);
                 return;
             }
 
-            RecordPanel.createOrShowLogMode(
-                context.extensionUri,
-                varName,
-                versions,
-                prefixService,
-                context.globalState
-            );
-
+            if (RecordPanel.currentPanel) {
+                RecordPanel.currentPanel.updateLog(varName, versions, 0);
+            }
         } catch (e: any) {
-            vscode.window.showErrorMessage(`Log Scan Failed: ${e.message}`);
+            vscode.window.showErrorMessage(`Scan Failed: ${e.message}`);
         }
     });
 
-    context.subscriptions.push(inspectDisposable, clipboardDisposable, saveDisposable, logHistoryDisposable);
+    context.subscriptions.push(startDisposable, saveDisposable, scanLogDisposable);
 }
 
-function extractIdFromText(text: string): string | null {
-    if (!text) return null;
-    const idPattern = /\b([a-zA-Z0-9]{18}|[a-zA-Z0-9]{15})\b/;
-    const match = text.match(idPattern);
-    if (match) return match[0];
-    return null;
+function isValidIdOrUrl(text: string): boolean {
+    return /\b([a-zA-Z0-9]{18}|[a-zA-Z0-9]{15})\b/.test(text);
+}
+
+function extractId(text: string): string | null {
+    const match = text.match(/\b([a-zA-Z0-9]{18}|[a-zA-Z0-9]{15})\b/);
+    return match ? match[0] : null;
 }
 
 export function deactivate() {}

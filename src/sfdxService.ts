@@ -19,8 +19,8 @@ export class SfdxService {
             return stdout ? JSON.parse(stdout) : {};
 
         } catch (err: any) {
-            // ... (Logging Logic kept same) ...
-            this.outputChannel.show(true); 
+            // DEBUG LOGGING (SILENT)
+            // We log to the channel but DO NOT force it open with .show(true)
             this.outputChannel.appendLine("---------------------------------------------------");
             this.outputChannel.appendLine("[ERROR] Execution Failed");
             this.outputChannel.appendLine(`[COMMAND] ${cmd}`);
@@ -84,7 +84,6 @@ export class SfdxService {
         return await this.runCommand(`sf sobject describe -s ${sobject} --json`);
     }
 
-    // --- CRITICAL FIX: QUOTING ---
     public static async updateRecord(sobject: string, id: string, fields: any) {
         let valuesStr = "";
         
@@ -93,8 +92,6 @@ export class SfdxService {
         }
 
         for (const [key, val] of Object.entries(fields)) {
-            // Fix: Use SINGLE QUOTES wrapping the value: Key='Value'
-            // Escape any single quotes INSIDE the value: O'Reilly -> O'\''Reilly
             let safeVal = String(val).replace(/'/g, "'\\''"); 
             valuesStr += `${key}='${safeVal}' `;
         }
@@ -103,7 +100,6 @@ export class SfdxService {
 
         if (!valuesStr) throw new Error("Failed to construct update values.");
 
-        // Wrap the whole thing in double quotes
         return await this.runCommand(`sf data update record -s ${sobject} -i ${id} --values "${valuesStr}" --json`);
     }
 
