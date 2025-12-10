@@ -1,137 +1,98 @@
-# Salesforce Record Inspector — User Guide
+Salesforce Record Inspector
+Stop Context Switching. Start Inspecting.
 
-The Salesforce Record Inspector is a VS Code extension that lets you quickly inspect, edit, and analyze Salesforce records and Apex debug logs without leaving your editor. This guide explains every feature step-by-step.
+Salesforce Record Inspector is the ultimate productivity booster for Salesforce Developers and Admins. It allows you to view, edit, and analyze Salesforce data directly inside VS Code without ever waiting for the browser to load.
 
-## Prerequisites
+Whether you are debugging a complex Apex log, setting up test data, or verifying a record's state, this extension brings your Org data to you instantly.
 
-- VS Code 1.80.0 or newer.
-- Salesforce CLI (`sf`) installed and accessible in your PATH.
+## Screenshots
 
-If `sf` isn’t found or no default org is set, the extension will show helpful error messages.
+### Enter a Record ID\URL on Home Page
+![Enter Record ID](assets/home.png)
 
-## Core Concepts
+### Get Details of your Salesforce Record
+![View Record Details](assets/record-inspect.png)
 
-- Inspect Mode (LIVE): View and edit a Salesforce record by ID.
-- Log Mode (LOG): Analyze variable assignments across an Apex debug log.
-- Presets: Save commonly used field values and apply them later.
-- History: Navigate back to previous views.
+### Edit and Save any Fields on the Record
+![Edit and Save Record](assets/edit-save.png)
 
-## Commands and Context Menu
+🚀 Key Features
 
-- Inspect Salesforce Record: Command Palette or editor context menu.
-- Inspect Salesforce Record (from Clipboard): Uses the latest copied text.
-- Save Salesforce Record: Appears in the panel while editing.
-- Scan Log Variable History: Command Palette or context menu on .log files.
+1. 🔍 Instant Record Inspection
 
-Tip: Right-click in the editor to use context menu options. For .log files, you’ll see “Scan Log Variable History.”
+View any Salesforce record instantly without leaving your code.
+Smart Detection: Highlight an ID (001...) in any file and right-click "Salesforce Record Inspector".
+Clipboard Support: Don't have an ID selected? The extension automatically checks your clipboard for IDs or Salesforce URLs.
+Manual Entry: Opens a dedicated Home Screen to paste IDs or URLs manually.
 
-## Inspecting a Record (LIVE Mode)
+2. ✏️ Smart Data Editor
 
-1. Select a Salesforce ID (15 or 18 characters) in the editor and run “Inspect Salesforce Record.”
-   - Or copy an ID to your clipboard and run “Inspect Salesforce Record (from Clipboard).”
-   - The extension auto-detects the object using the ID prefix (e.g., 001 → Account).
-2. The panel opens beside your editor showing:
-   - Title: Object API name and the record ID.
-   - Optional record name (if the “Name” field exists).
-   - All fields and their values, sorted alphabetically.
-   - Quick copy buttons for field names and values.
-   - A filter box to quickly search by field name or value.
+Update records safely and quickly.
+Type-Aware Inputs:
+Picklists: Renders actual dropdown menus from your Org.
+Dates: Shows a calendar picker.
+Booleans: Shows checkboxes.
+Read-Only: System fields are locked 🔒 automatically.
+Production Safety: Includes a built-in safety interlock. If you try to save changes to a Production org, the extension forces a confirmation dialog to prevent accidents.
 
-### Actions in LIVE Mode
+3. 💾 Data Presets (Templates)
 
-- Edit: Switches the panel to editable mode.
-- Open in Org: Opens the record in your connected Salesforce org.
-- Log History: Jump to log analysis (LOG Mode).
+Stop manually typing the same test data over and over.
+Save Preset: After filling out a form, you can save the state as a named Preset (e.g., "Standard Test Account").
+Flexible Saving: Choose to save a Snapshot (all visible fields) or just the Modified Fields (delta).
+Load Preset: Open a new record, click Load Preset, and watch the form fill itself instantly.
 
-### Editing Fields
+4. ⏳ Log Time Travel (Variable History)
 
-Click “Edit” to enable editing. You’ll see:
-- Inputs based on field types:
-  - Checkbox for boolean
-  - Dropdown for picklist
-  - Number inputs for numeric fields
-  - Date picker for date fields
-  - Textarea for long text
-  - Text input for other types
-- Only updateable fields are editable. Locked fields show a lock icon when editing is on.
-- You can:
-  - Save: Applies only modified fields and reloads fresh record data.
-  - Cancel: Exits editing without changes.
-  - Save Preset: Save current input values as a reusable preset.
-  - Load Preset: Apply a previously saved preset to inputs.
+Debugging complex logic? Stop scrolling through thousands of lines of text.
+Variable Scanning: Open a .log file, click "Scan Log Variable History", and type a variable name (e.g., myOrderList).
+Version History: The panel shows a dropdown of every time that variable was assigned or modified (e.g., Version 1 (Line 50), Version 2 (Line 105)).
+Diff Highlighting: Values that changed between versions are highlighted in Yellow so you can spot state mutations instantly.
+Noise Filter: Use the "Ignore Nulls" checkbox to hide versions where the variable was null, giving you a clean view of the data's lifecycle.
 
-Safety:
-- If the org is Production, you’ll get a confirmation dialog before saving.
+5. 🧭 Deep Navigation
 
-### Save Presets
+Drill Down: Click on any related Record ID (e.g., OwnerId, AccountId) in the table to inspect that child/parent record immediately.
+History Stack: Use the ⬅ Back button to navigate through your inspection history without losing context.
 
-- Save Preset:
-  - Choose “Save All” (all visible inputs) or “Save Modified” (only changed inputs).
-  - Name your preset (e.g., “Standard Setup”).
-- Load Preset:
-  - Choose from saved presets for the current object.
-  - Values are applied to inputs and highlighted.
 
-Presets are stored per object type in VS Code’s global state, scoped by your org user.
+📖 How to Use
 
-### Navigation
+Inspecting a Record
+Right-click anywhere in the editor (or on a selected ID) and choose Salesforce Record Inspector.
+If an ID is detected (selection or clipboard), the panel loads immediately.
+If no ID is found, the Home Screen appears. Paste your ID and hit Enter.
 
-- Back: Return to the previous view (e.g., prior record or log analysis).
-- Inspect linked IDs: Any field value that looks like a Salesforce ID is clickable. Click to drill into that record.
+Editing Data
+In the Inspector Panel, click the blue ✎ Edit button.
+Modify the fields (using dropdowns, checkboxes, etc.).
+Click ✔ Save.
 
-## Scanning Apex Debug Logs (LOG Mode)
+(Optional) Click 💾 Save Preset to store these values for later use on other records.
 
-Use this when you have a .log file open or selected.
+Analyzing Logs
+Open a Salesforce Debug Log (.log) file.
+Right-click and select Salesforce Record Inspector (or click the Scan Log Variable button on the Home Screen).
+Enter the variable name you want to trace.
+Use the History Dropdown at the top of the panel to step through the variable's lifecycle.
 
-1. Open your .log file in VS Code.
-2. Run “Scan Log Variable History.”
-   - If you selected text in the editor, it will pre-fill the variable name.
-   - Otherwise, enter the variable name (e.g., `newAccountList`).
-3. The panel displays versions of the variable over time:
-   - History selector: Choose a specific version by timestamp and line number.
-   - Ignore Nulls: Hide entries where the variable value is null.
-   - New Scan: Start another scan on the current/open log.
-4. This only works for single variables, and not list or any other type of variables.
 
-Data display:
-- If the assignment looks like JSON, it’s parsed and shown as a structured object.
-- If it’s a list, the first item is shown for quick inspection.
-- Non-JSON values are shown as “Value: <text>”.
-- Changes between versions are highlighted. Hover to see the previous value.
+⚙️ Requirements
+VS Code: Version 1.80.0 or higher.
+Salesforce CLI: You must have the standard Salesforce CLI installed (sf v2).
+Authorized Org: You must be logged into a Salesforce Org in your terminal. The extension automatically connects to your default target org (sf config get target-org).
 
-Tip: You can filter field names or values with the search box, even in LOG Mode.
 
-## Status and Output
+❓ FAQ
 
-- Progress notifications: Shown while identifying object, fetching data, saving, and scanning logs.
-- Output Channel “SF Inspector Debug”: Shows command errors or details if something fails.
-- Clear system messages guide you if:
-  - No default org is set.
-  - The ID is invalid.
-  - The record is not found.
-  - The `sf` CLI isn’t available.
+Q: Does this send my data to the cloud?
+A: No. This extension runs entirely locally on your machine. It uses your local Salesforce CLI (sf) to fetch data directly from your connected Org. No data is sent to third-party servers.
 
-## Troubleshooting
+Q: Can I edit Formula fields?
+A: No. The extension detects read-only fields (Formulas, Roll-up Summaries, System Fields) and marks them with a 🔒 icon.
 
-- “VS Code cannot find the 'sf' command.”:
-  - Ensure Salesforce CLI is installed and added to PATH.
-  - On macOS (zsh), restart your terminal after installation.
-- “No default Salesforce Org found.”:
-  - Run: `sf config set target-org <aliasOrUsername>`.
-- Record shows no data:
-  - Verify the ID is correct and accessible in the target org.
-- Log scan finds no versions:
-  - Confirm the log contains `VARIABLE_ASSIGNMENT` lines for your variable.
-  - Make sure the variable name matches exactly.
+Q: Why isn't my log variable showing up?
+**A: Ensure you typed the variable name exactly as it appears in the log. The parser looks for VARIABLE_ASSIGNMENT events.
 
-## Where things run
-
-- All Salesforce interactions happen via the `sf` CLI in your workspace folder.
-- The panel is a Webview beside your editor, with copy, search, edit, and navigation controls.
-
-## Quick Usage Flow
-
-- Inspect from selection or clipboard → View fields → Edit if needed → Save or open in org.
-- Open a .log → Scan for variable → Browse versions → Filter or rescan as needed.
-
-That’s it. You can now inspect, edit, and analyze Salesforce data directly in VS Code with confidence.
+📄 License
+This extension is licensed under the MIT License.
